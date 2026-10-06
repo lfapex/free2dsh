@@ -1,4 +1,11 @@
 node_modules/
-lib/
 *.tgz
 *.log
+
+# lib/ is intentionally NOT ignored.
+#
+# DSH installs plugins with pnpm straight from GitHub (`github:lfapex/free2dsh`),
+# so the bundle has to travel with the repo: with lib/ ignored, the installed
+# package has no lib/index.js, `main` is unresolvable and the host reports
+# "failed to import". cline2dsh hit this in v0.1.1 and fixed it the same way.
+# `prepare` builds lib/ on git install too, so both paths are covered.
