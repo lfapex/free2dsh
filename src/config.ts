@@ -11,8 +11,16 @@ import { LANE_IDS, type LaneId } from './types.ts'
  */
 
 export interface Free2dshConfig {
-  /** Provider route registered for the merged catalog (the model picker column). */
+  /** Route-name prefix: the per-lane routes are `<providerId>-<lane>`. */
   providerId?: string
+  /**
+   * Also register the merged `<providerId>` route next to the per-lane ones.
+   *
+   * Off by default: the per-lane routes already expose every model, and a
+   * merged column duplicates all of them in the picker (with `<lane>/<id>`
+   * namespaced ids). Turn it on when you want one column for everything.
+   */
+  mergedRoute?: boolean
   /** Lanes to expose. Empty = every lane this plugin ships. */
   lanes?: string[]
   /** Catalog refresh interval in seconds. */
@@ -57,6 +65,7 @@ export interface Free2dshConfig {
 
 export const defaults = {
   providerId: 'free2dsh',
+  mergedRoute: false,
   lanes: [] as LaneId[],
   refreshSeconds: 300,
   dataDir: '',
@@ -116,6 +125,7 @@ export function resolveConfig(config: Free2dshConfig = {}): ResolvedConfig {
  */
 export const Config = Schema.object({
   providerId: Schema.string().default(defaults.providerId),
+  mergedRoute: Schema.boolean().default(defaults.mergedRoute),
   lanes: Schema.array(Schema.string()).default(defaults.lanes),
   refreshSeconds: Schema.number().step(1).min(30).default(defaults.refreshSeconds),
   dataDir: Schema.string().default(defaults.dataDir),

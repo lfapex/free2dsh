@@ -146,7 +146,11 @@ export function apply(ctx: PluginContext, config: Free2dshConfig = {}): void {
   // Register FIRST: the provider must appear in the selector right away, even
   // while the catalogs are still warming. A throw anywhere below must never
   // cost the deployment its provider.
-  const routes = [resolved.providerId, ...lanes.map((lane) => `${resolved.providerId}-${lane.id}`)]
+  //
+  // One route per lane, and — only when asked for — the merged route that
+  // unions them, whose ids are namespaced `<lane>/<id>`.
+  const laneRoutes = lanes.map((lane) => `${resolved.providerId}-${lane.id}`)
+  const routes = resolved.mergedRoute ? [resolved.providerId, ...laneRoutes] : laneRoutes
   const registration = registrationHandle(ctx.llm.registerAdapter(routes, adapter))
   logger.info(`free2dsh v${PLUGIN_VERSION}: adapter registered for ${routes.map((route) => `"${route}"`).join(', ')} — ${catalog.summary()}`)
 

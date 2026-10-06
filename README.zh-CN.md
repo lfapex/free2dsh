@@ -10,9 +10,9 @@
 | **AtomCode** | `free2dsh-atomcode` | AtomGit CodingPlan 免费通道（`qwen3.8-27b`、`glm5.3-flash` …） | 执行过 `atomcode login` |
 | **OpenCode Zen** | `free2dsh-opencode` | OpenCode 匿名免费通道 | 不需要 |
 
-合并路由 `free2dsh` 一次显示全部三个通道。模型 id 带 `<通道>/` 前缀，避免 Cline 的
-`cline-free/deepseek-v4.1-flash` 和 AtomCode 的 `qwen3.8-27b` 撞名；单通道路由下
-id 保持原样。
+每个通道是选择器里独立的分组，模型 id 保持裸 id。把 `mergedRoute` 设为 `true` 才会额外
+注册合并的 `free2dsh` 路由：一个分组显示全部三个通道，此时 id 带 `<通道>/` 前缀，避免 Cline 的
+`cline-free/deepseek-v4.1-flash` 和 AtomCode 的 `qwen3.8-27b` 撞名。
 
 ```
 DSH 会话
@@ -47,8 +47,8 @@ cd free2dsh && npm install && npm run build
 dsh plugin --profile web add file:$PWD
 ```
 
-装完重启 profile，模型选择器里出现 `free2dsh`，旁边还有三个单通道路由
-（`free2dsh-cline` 等）。
+装完重启 profile，模型选择器里出现三个通道分组（`free2dsh-cline`、
+`free2dsh-atomcode`、`free2dsh-opencode`）。
 
 仓库里**没有任何安装期构建脚本**：`lib/` 已提交进 git，pnpm 安装这个插件时无需
 执行任何脚本。这是有意为之 —— pnpm 默认拦截 git 依赖的构建脚本，除非使用方手动
@@ -93,7 +93,8 @@ dsh plugin --profile web add file:$PWD
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `providerId` | `free2dsh` | 合并路由名；单通道路由按 `<providerId>-<通道>` 派生 |
+| `providerId` | `free2dsh` | 路由名前缀；单通道路由为 `<providerId>-<通道>` |
+| `mergedRoute` | `false` | 额外注册合并的 `<providerId>` 路由（三个通道合一列，id 带 `<通道>/` 前缀） |
 | `lanes` | 全部 | `cline` / `atomcode` / `opencode` 的子集 |
 | `refreshSeconds` | `300` | 目录刷新周期（最小 30） |
 | `dataDir` | `~/.free2dsh` | 目录缓存 + AtomCode 令牌 sidecar（`FREE2DSH_HOME`） |

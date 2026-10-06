@@ -204,8 +204,16 @@ interface HarnessGenerateOptions {
  * file (`clineFreeOnly: false`) without nested-object default ambiguity.
  */
 interface Free2dshConfig {
-  /** Provider route registered for the merged catalog (the model picker column). */
+  /** Route-name prefix: the per-lane routes are `<providerId>-<lane>`. */
   providerId?: string;
+  /**
+   * Also register the merged `<providerId>` route next to the per-lane ones.
+   *
+   * Off by default: the per-lane routes already expose every model, and a
+   * merged column duplicates all of them in the picker (with `<lane>/<id>`
+   * namespaced ids). Turn it on when you want one column for everything.
+   */
+  mergedRoute?: boolean;
   /** Lanes to expose. Empty = every lane this plugin ships. */
   lanes?: string[];
   /** Catalog refresh interval in seconds. */
@@ -251,6 +259,7 @@ declare function resolveConfig(config?: Free2dshConfig): ResolvedConfig;
  */
 declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
   providerId: Schema<string, string, "defined">;
+  mergedRoute: Schema<boolean, boolean, "defined">;
   lanes: Schema<string[], string[], "defined">;
   refreshSeconds: Schema<number, number, "defined">;
   dataDir: Schema<string, string, "defined">;
@@ -269,6 +278,7 @@ declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
   bodyIdleMs: Schema<number, number, "plain">;
 }>>, Schemastery.ObjectT<NoInfer<{
   providerId: Schema<string, string, "defined">;
+  mergedRoute: Schema<boolean, boolean, "defined">;
   lanes: Schema<string[], string[], "defined">;
   refreshSeconds: Schema<number, number, "defined">;
   dataDir: Schema<string, string, "defined">;

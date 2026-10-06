@@ -10,9 +10,10 @@ provider:
 | **AtomCode** | `free2dsh-atomcode` | AtomGit CodingPlan free lane (`qwen3.8-27b`, `glm5.3-flash`, …) | `atomcode login` |
 | **OpenCode Zen** | `free2dsh-opencode` | OpenCode's anonymous free lane — no account at all | none |
 
-Merged route `free2dsh` shows all three at once. Model ids are namespaced
-`<lane>/<id>` so Cline's `cline-free/deepseek-v4.1-flash` and AtomCode's
-`qwen3.8-27b` can never collide; on a lane route the ids stay bare.
+Each lane is its own picker group, and the ids stay bare. Set
+`mergedRoute: true` to also register the merged `free2dsh` route, which unions
+all three in one column with namespaced `<lane>/<id>` ids — so Cline's
+`cline-free/deepseek-v4.1-flash` and AtomCode's `qwen3.8-27b` can never collide.
 
 ```
 DSH session
@@ -49,8 +50,8 @@ cd free2dsh && npm install && npm run build
 dsh plugin --profile web add file:$PWD
 ```
 
-Restart the profile afterwards. `free2dsh` appears in the model picker; the
-per-lane routes (`free2dsh-cline`, …) show up next to it.
+Restart the profile afterwards. The lane routes (`free2dsh-cline`,
+`free2dsh-atomcode`, `free2dsh-opencode`) appear as model-picker groups.
 
 The repo declares **no install-time build scripts**: `lib/` is committed, so
 pnpm never has to run anything while installing the plugin. That is deliberate —
@@ -103,7 +104,8 @@ Defaults need no edits. Override anything in the profile's
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `providerId` | `free2dsh` | merged route name; lane routes are derived as `<providerId>-<lane>` |
+| `providerId` | `free2dsh` | route-name prefix; lane routes are `<providerId>-<lane>` |
+| `mergedRoute` | `false` | also register the merged `<providerId>` route (all lanes in one column, ids namespaced `<lane>/<id>`) |
 | `lanes` | all | subset of `cline`, `atomcode`, `opencode` |
 | `refreshSeconds` | `300` | catalogue refresh cadence (min 30) |
 | `dataDir` | `~/.free2dsh` | catalogues + the AtomCode token sidecar (`FREE2DSH_HOME`) |

@@ -3,7 +3,9 @@
 # Defaults need no edits: every enabled lane registers itself immediately and
 # warms its catalog in the background, so one install exposes Cline's free
 # fleet, the AtomCode/AtomGit CodingPlan lane and the OpenCode Zen anonymous
-# lane under a single `free2dsh` provider.
+# lane — each as its own `free2dsh-<lane>` model-picker group, which are also
+# its provider routes. Set `mergedRoute: true` to add one merged `free2dsh`
+# column that unions all three (ids then carry a `<lane>/` prefix).
 #
 # Override any option via the config object below (see src/config.ts), e.g.:
 #
@@ -12,6 +14,7 @@
 #       name: 'free2dsh'
 #       config:
 #         lanes: [cline, opencode]
+#         mergedRoute: true
 #         refreshSeconds: 300
 #         atomcodeAllowRefresh: false
 - insert:

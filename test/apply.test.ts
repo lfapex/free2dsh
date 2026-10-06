@@ -75,24 +75,42 @@ function offline(): () => void {
 
 const dirs = () => mkdtempSync(join(tmpdir(), 'free2dsh-apply-'))
 
-test('apply(): re-announces the routes once a lane has models', async () => {
+test('apply(): registers one route per lane, and re-announces once it has models', async () => {
   const restore = offline()
   try {
     const host = fakeHost()
     apply(host.ctx, { lanes: ['opencode'], dataDir: dirs() })
     host.dispose?.()
 
-    assert.deepEqual(host.routes, ['free2dsh', 'free2dsh-opencode'])
+    // No merged route unless asked for: the lane routes already carry every
+    // model, and a merged column would duplicate them in the picker.
+    assert.deepEqual(host.routes, ['free2dsh-opencode'])
 
     await until(() => host.announcements.length >= 2)
     // The very first re-announce — the one that follows the local prime — must
     // already carry models, or the picker would keep an empty snapshot.
     const first = host.announcements[0]!
-    const opencode = first.routes.indexOf('free2dsh-opencode')
-    assert.ok(first.counts[opencode]! > 0, `first announcement was empty: ${JSON.stringify(first.counts)}`)
+    assert.ok(first.counts[0]! > 0, `first announcement was empty: ${JSON.stringify(first.counts)}`)
     for (const announcement of host.announcements) {
-      assert.deepEqual(announcement.routes, ['free2dsh', 'free2dsh-opencode'])
+      assert.deepEqual(announcement.routes, ['free2dsh-opencode'])
     }
+  } finally {
+    restore()
+  }
+})
+
+test('apply(): mergedRoute opts the union route back in, ahead of the lane routes', async () => {
+  const restore = offline()
+  try {
+    const host = fakeHost()
+    apply(host.ctx, { lanes: ['cline', 'opencode'], mergedRoute: true, dataDir: dirs() })
+    host.dispose?.()
+
+    assert.deepEqual(host.routes, ['free2dsh', 'free2dsh-cline', 'free2dsh-opencode'])
+    await until(() => host.announcements.length >= 2)
+    assert.deepEqual(host.announcements.at(-1)!.routes, ['free2dsh', 'free2dsh-cline', 'free2dsh-opencode'])
+    // The merged route exposes the namespaced ids of both lanes.
+    assert.ok(host.adapter.listModels('free2dsh').some((model) => model.id.startsWith('opencode/')))
   } finally {
     restore()
   }

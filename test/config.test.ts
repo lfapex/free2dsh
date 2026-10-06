@@ -12,6 +12,14 @@ test('defaults ship every lane on, so one install is enough', () => {
   assert.equal(resolved.atomcodeAllowRefresh, true)
 })
 
+test('defaults register the lane routes only — the merged route is opt-in', () => {
+  const resolved = resolveConfig()
+  assert.equal(resolved.mergedRoute, false)
+  assert.equal(resolveConfig({ mergedRoute: true }).mergedRoute, true)
+  assert.equal(Config({}).mergedRoute, false)
+  assert.equal(Config({ mergedRoute: true }).mergedRoute, true)
+})
+
 test('resolveLanes filters unknown names and preserves canonical order', () => {
   assert.deepEqual(resolveLanes({ lanes: ['opencode', 'cline'] }), ['cline', 'opencode'])
   assert.deepEqual(resolveLanes({ lanes: [' CLINE ', 'nope'] }), ['cline'])
