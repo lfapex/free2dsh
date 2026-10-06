@@ -34,10 +34,26 @@ export interface PluginContext {
   effect?(fn: () => () => void): unknown
 }
 
+/**
+ * The handle `registerAdapter` returns. `replace` re-commits the same route set
+ * in one synchronous section, which is what republishes the host's
+ * `llm/adapters-updated` event — the only signal the model picker re-reads its
+ * catalogue on. Treated as optional: a host (or a test double) may return
+ * nothing, and that must cost notifications, never activation.
+ */
+export interface AdapterRegistration {
+  replace?(providers: string[]): unknown
+}
+
+function registrationHandle(value: unknown): AdapterRegistration | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  return typeof (value as AdapterRegistration).replace === 'function' ? (value as AdapterRegistration) : undefined
+}
+
 export const name = 'free2dsh'
 
 /** Bumped per release; logged at registration so the live code is identifiable. */
-export const PLUGIN_VERSION = '0.1.0'
+export const PLUGIN_VERSION = '0.1.1'
 
 /**
  * The plugin's settings schema. DSH reads this export to decide which fields
@@ -131,20 +147,41 @@ export function apply(ctx: PluginContext, config: Free2dshConfig = {}): void {
   // while the catalogs are still warming. A throw anywhere below must never
   // cost the deployment its provider.
   const routes = [resolved.providerId, ...lanes.map((lane) => `${resolved.providerId}-${lane.id}`)]
-  ctx.llm.registerAdapter(routes, adapter)
+  const registration = registrationHandle(ctx.llm.registerAdapter(routes, adapter))
   logger.info(`free2dsh v${PLUGIN_VERSION}: adapter registered for ${routes.map((route) => `"${route}"`).join(', ')} — ${catalog.summary()}`)
+
+  /**
+   * Re-announce the route set so the host republishes `llm/adapters-updated`.
+   *
+   * Every catalog is warmed in the background, so at registration time no lane
+   * has a model yet: a picker that reads the catalogue then would show the
+   * plugin with empty groups, and — because that event is the only thing the
+   * picker re-reads on — it would keep showing them until the user touched
+   * settings or reconnected. Re-announcing as each lane becomes ready is what
+   * makes models that arrive after activation visible.
+   */
+  const announce = (): void => {
+    try {
+      registration?.replace?.(routes)
+    } catch (err) {
+      logger.warn(`free2dsh: route re-announce failed: ${(err as Error).message} (models still served)`)
+    }
+  }
 
   // Warm every lane in the background. One lane failing (no login, network
   // down, upstream 5xx) must not delay or break the others.
   for (const lane of lanes) {
-    void lane
-      .start()
-      .then(() => {
-        logger.info(`free2dsh: ${lane.label} ready — ${lane.health().models} model(s), catalog ${lane.health().catalog}`)
-      })
-      .catch((err: Error) => {
-        logger.warn(`free2dsh: ${lane.label} warm-up failed: ${err.message} (other lanes unaffected)`)
-      })
+    void (async () => {
+      // Phase 1: the local seed (disk cache, or the compiled-in roster) puts
+      // this lane in the picker within milliseconds; phase 2 is the network.
+      await lane.prime?.()
+      announce()
+      await lane.start()
+      announce()
+      logger.info(`free2dsh: ${lane.label} ready — ${lane.health().models} model(s), catalog ${lane.health().catalog}`)
+    })().catch((err: Error) => {
+      logger.warn(`free2dsh: ${lane.label} warm-up failed: ${err.message} (other lanes unaffected)`)
+    })
   }
 
   const maybeEffect = ctx.effect

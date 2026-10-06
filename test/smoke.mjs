@@ -89,6 +89,9 @@ writeFileSync(
 
 /* ---- fake DSH host ----------------------------------------------------- */
 const lines = []
+// Mirrors dsh-llm: registerAdapter returns a handle whose replace() re-commits
+// the route set, which is what republishes llm/adapters-updated for the picker.
+const announces = []
 const ctx = {
   logger: {
     debug: (m) => lines.push(`debug ${m}`),
@@ -96,7 +99,20 @@ const ctx = {
     warn: (m) => lines.push(`warn  ${m}`),
     error: (m) => lines.push(`error ${m}`),
   },
-  llm: { registerAdapter: (providers, adapter) => { ctx.registered = { providers, adapter } } },
+  llm: {
+    registerAdapter: (providers, adapter) => {
+      ctx.registered = { providers, adapter }
+      return {
+        replace: (next) => {
+          announces.push({
+            routes: [...next],
+            // What a picker reading the catalog at this instant would see.
+            counts: next.map((route) => adapter.listModels(route).length),
+          })
+        },
+      }
+    },
+  },
   effect: (fn) => { ctx.dispose = fn() },
 }
 
@@ -113,6 +129,19 @@ console.log('')
 
 // Let the background warm-up finish.
 await new Promise((resolve) => setTimeout(resolve, 1500))
+
+// Every lane must have re-announced by now: that is how models which arrive
+// after activation reach a picker that snapshots the catalog at boot.
+console.log(`announcements: ${announces.length}`)
+for (const [index, announce] of announces.entries()) {
+  console.log(`  #${index + 1} ${announce.routes.map((route, i) => `${route}=${announce.counts[i]}`).join(' ')}`)
+}
+const lastAnnounce = announces[announces.length - 1]
+if (!lastAnnounce || lastAnnounce.counts.some((count) => count === 0)) {
+  console.error('FAIL: a route was still empty at the last announcement')
+  process.exit(1)
+}
+console.log('')
 
 for (const route of providers) {
   const models = adapter.listModels(route)

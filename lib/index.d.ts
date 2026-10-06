@@ -128,6 +128,13 @@ interface Lane {
   models(): string[];
   entry(model: string): LaneModel | undefined;
   health(): LaneHealth;
+  /**
+   * Local-only warm start: seed the catalog from this lane's disk cache and,
+   * failing that, from its compiled-in roster. Must never touch the network and
+   * must never throw, so the host can call it and read the catalog in the same
+   * breath. Optional only for test doubles; every shipped lane implements it.
+   */
+  prime?(): Promise<void>;
   /** Warm the catalog and arm the refresh timer. Never throws. */
   start(): Promise<void>;
   stop(): void;
@@ -413,6 +420,8 @@ declare class ClineLane implements Lane {
   models(): string[];
   entry(model: string): LaneModel | undefined;
   health(): LaneHealth;
+  /** Tier 2: seed from the disk cache so the lane is populated before the network. */
+  prime(): Promise<void>;
   start(): Promise<void>;
   stop(): void;
   stream(model: string, options: HarnessGenerateOptions): AsyncGenerator<HarnessChunk>;
@@ -441,6 +450,11 @@ declare class AtomCodeLane implements Lane {
   entry(model: string): LaneModel | undefined;
   hosts(): string[];
   health(): LaneHealth;
+  /**
+   * This lane's catalog is local (config.toml → cache → static), so priming it
+   * is just its refresh; the guard keeps a warmed catalog from being re-read.
+   */
+  prime(): Promise<void>;
   start(): Promise<void>;
   stop(): void;
   /**
@@ -475,11 +489,26 @@ declare class OpenCodeLane implements Lane {
   models(): string[];
   entry(model: string): LaneModel | undefined;
   health(): LaneHealth;
+  /**
+   * Seed from the 7-day disk cache, then the hand-verified roster. This lane is
+   * the only one whose catalog is not local — Cline primes from disk and
+   * AtomCode reads config.toml — so without a primed start it is the one lane
+   * that stays invisible until the network answers. Never throws.
+   */
+  prime(): Promise<void>;
   start(): Promise<void>;
   stop(): void;
   /**
    * Live `GET /v1/models` ∩ free verdict, models.dev metadata enrichment
    * best-effort; 7-day disk cache next; verified static roster last.
+   *
+   * The live list is published the moment it arrives, using the verdicts that
+   * need no metadata at all (hand-verified ids, and ids whose name says
+   * "free"). models.dev is a multi-megabyte download that only *adds* metadata
+   * and rescues zero-cost ids whose name does not say free, so gating the
+   * catalog on it would leave this lane empty for as long as that download
+   * takes — long enough for a host that snapshots the catalog at boot to show
+   * the lane (and its route) as empty.
    */
   refresh(): Promise<void>;
   stream(model: string, options: HarnessGenerateOptions): AsyncGenerator<HarnessChunk>;
@@ -511,13 +540,23 @@ interface PluginContext {
   };
   effect?(fn: () => () => void): unknown;
 }
+/**
+ * The handle `registerAdapter` returns. `replace` re-commits the same route set
+ * in one synchronous section, which is what republishes the host's
+ * `llm/adapters-updated` event — the only signal the model picker re-reads its
+ * catalogue on. Treated as optional: a host (or a test double) may return
+ * nothing, and that must cost notifications, never activation.
+ */
+interface AdapterRegistration {
+  replace?(providers: string[]): unknown;
+}
 declare const name = "free2dsh";
 /** Bumped per release; logged at registration so the live code is identifiable. */
-declare const PLUGIN_VERSION = "0.1.0";
+declare const PLUGIN_VERSION = "0.1.1";
 /** Only `llm` gates this fiber: the adapter needs nothing else. */
 declare const inject: readonly ["llm"];
 /** Build the enabled lanes, in picker order, from resolved config. */
 declare function buildLanes(config: ResolvedConfig, logger: PluginLogger, dataDir: string): Lane[];
 declare function apply(ctx: PluginContext, config?: Free2dshConfig): void;
 //#endregion
-export { AtomCodeLane, ClineLane, Config, type FinishReason, Free2dshAdapter, type Free2dshConfig, type Free2dshConfig as Free2dshPluginConfig, type HarnessChunk, LANE_IDS, type Lane, type LaneId, type LaneModel, OpenCodeLane, PLUGIN_VERSION, PluginContext, type PluginLogger, type ResolvedConfig, UnifiedCatalog, type UnifiedModel, apply, buildLanes, defaultDataDir, inject, name, resolveConfig };
+export { AdapterRegistration, AtomCodeLane, ClineLane, Config, type FinishReason, Free2dshAdapter, type Free2dshConfig, type Free2dshConfig as Free2dshPluginConfig, type HarnessChunk, LANE_IDS, type Lane, type LaneId, type LaneModel, OpenCodeLane, PLUGIN_VERSION, PluginContext, type PluginLogger, type ResolvedConfig, UnifiedCatalog, type UnifiedModel, apply, buildLanes, defaultDataDir, inject, name, resolveConfig };

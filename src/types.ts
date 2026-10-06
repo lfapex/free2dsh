@@ -68,6 +68,13 @@ export interface Lane {
   models(): string[]
   entry(model: string): LaneModel | undefined
   health(): LaneHealth
+  /**
+   * Local-only warm start: seed the catalog from this lane's disk cache and,
+   * failing that, from its compiled-in roster. Must never touch the network and
+   * must never throw, so the host can call it and read the catalog in the same
+   * breath. Optional only for test doubles; every shipped lane implements it.
+   */
+  prime?(): Promise<void>
   /** Warm the catalog and arm the refresh timer. Never throws. */
   start(): Promise<void>
   stop(): void

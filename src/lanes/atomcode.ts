@@ -88,8 +88,16 @@ export class AtomCodeLane implements Lane {
     }
   }
 
+  /**
+   * This lane's catalog is local (config.toml → cache → static), so priming it
+   * is just its refresh; the guard keeps a warmed catalog from being re-read.
+   */
+  async prime(): Promise<void> {
+    if (this.#entries.length === 0) await this.refresh()
+  }
+
   async start(): Promise<void> {
-    await this.refresh()
+    await this.prime()
     this.#report()
     this.#timer = setInterval(() => {
       try {

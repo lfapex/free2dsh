@@ -149,6 +149,13 @@ Every lane falls back the same way: **live source → 7-day disk cache →
 compiled-in static roster**, so the picker is populated even when an upstream
 is unreachable. Failed refreshes are logged and never block the other lanes.
 
+That chain is also read *before* the network: each lane is primed from its
+cache (or the roster) at boot, and the plugin re-announces its routes every
+time a lane becomes ready. DSH's picker only re-reads a catalogue on
+`llm/adapters-updated`, which dsh-llm publishes when a route set is committed —
+so without the prime and the re-announce, a lane whose catalogue needs the
+network would sit empty in the picker until the profile was restarted.
+
 ## Resilience
 
 - **Watchdogs.** `fetch` owns no body-silence timeout, so a tunnel that
@@ -159,6 +166,10 @@ is unreachable. Failed refreshes are logged and never block the other lanes.
   on upstream error, on timeout, and even when a lane throws before returning
   its generator.
 - **One upstream attempt per call.** Retry policy stays DSH's job.
+- **Nothing waits for the network to be listed.** Registration happens first,
+  every catalogue is seeded locally, and each lane re-announces the routes when
+  it reaches ready — a slow upstream delays that lane's *live* metadata, never
+  its appearance in the picker.
 
 ## Troubleshooting
 
@@ -174,6 +185,7 @@ is unreachable. Failed refreshes are logged and never block the other lanes.
 | OpenCode only lists a few models | the live fetch raced your network; the next refresh fixes it |
 | `RATE_LIMIT` on Zen | the anonymous lane is quota-per-IP — switch network node or wait |
 | `REGION_BLOCKED` | Zen rejected the current region for that model; pick another |
+| A lane's group is empty or missing in the picker | its catalogue was read before that lane warmed. The picker re-reads on `llm/adapters-updated`, which this plugin republishes as each lane becomes ready — on a build older than 0.1.1 the OpenCode lane was the visible case, since it is the only lane whose catalogue needs the network |
 | `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` | you installed a revision that still declared a `prepare` script; pnpm ≥ 10.26 blocks git-hosted build scripts until the *consumer* approves them. Install a revision without one (the bundle is committed, so there is nothing to build), or allowlist the plugin in the profile's `pnpm-workspace.yaml` under `allowBuilds` |
 
 Health snapshots live under `<dataDir>/cache/` — `cline.json`, `atomcode.json`,

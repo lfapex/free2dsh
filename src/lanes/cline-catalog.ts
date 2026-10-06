@@ -150,12 +150,20 @@ export class ClineCatalog {
 
   /** Tier 2: initial disk-cache read. Never throws. Returns a startup note. */
   async prime(): Promise<string> {
+    // Never regress a catalog that is already live: the host may prime, refresh
+    // and prime again across one boot.
+    if (this.#tier === 'live' || this.#entries.size > 0) return `already ${this.#tier} (${this.#entries.size} models)`
     const cached = await readCache<LaneModel>(this.#options.cachePath)
     if (cached && cached.entries.length > 0) {
       this.#ingest(cached.entries, 'cache')
       return `cache (${cached.entries.length} models)`
     }
-    return 'no cache'
+    // No cache: publish the compiled-in roster so this lane is populated (and
+    // visible in the picker) before the first network call answers. `entry()`
+    // resolves models through this map, so leaving the roster only in list()
+    // would still read as an empty lane to a catalog consumer.
+    this.#ingest(STATIC_CLINE_MODELS, 'static')
+    return `static roster (${STATIC_CLINE_MODELS.length} models)`
   }
 
   async refresh(): Promise<void> {

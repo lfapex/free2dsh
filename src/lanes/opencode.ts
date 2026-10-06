@@ -189,7 +189,27 @@ export class OpenCodeLane implements Lane {
     }
   }
 
+  /**
+   * Seed from the 7-day disk cache, then the hand-verified roster. This lane is
+   * the only one whose catalog is not local — Cline primes from disk and
+   * AtomCode reads config.toml — so without a primed start it is the one lane
+   * that stays invisible until the network answers. Never throws.
+   */
+  async prime(): Promise<void> {
+    if (this.#entries.length > 0) return
+    const cached = await readCache<LaneModel>(this.#cachePath)
+    if (cached && cached.entries.length > 0) {
+      this.#entries = cached.entries
+      this.#tier = 'cache'
+      return
+    }
+    this.#entries = [...STATIC_OPENCODE_MODELS]
+    this.#tier = 'static'
+  }
+
   async start(): Promise<void> {
+    await this.prime()
+    this.#logger.info(`free2dsh[opencode]: primed from ${this.#tier} — ${this.#entries.length} model(s)`)
     await this.refresh()
     if (this.#lastError) this.#logger.warn(`free2dsh[opencode]: ${this.#lastError}`)
     else this.#logger.info(`free2dsh[opencode]: catalog ${this.#tier} — ${this.models().join(', ') || '(none)'}`)
@@ -209,18 +229,23 @@ export class OpenCodeLane implements Lane {
   /**
    * Live `GET /v1/models` ∩ free verdict, models.dev metadata enrichment
    * best-effort; 7-day disk cache next; verified static roster last.
+   *
+   * The live list is published the moment it arrives, using the verdicts that
+   * need no metadata at all (hand-verified ids, and ids whose name says
+   * "free"). models.dev is a multi-megabyte download that only *adds* metadata
+   * and rescues zero-cost ids whose name does not say free, so gating the
+   * catalog on it would leave this lane empty for as long as that download
+   * takes — long enough for a host that snapshots the catalog at boot to show
+   * the lane (and its route) as empty.
    */
   async refresh(): Promise<void> {
+    let published = false
     try {
       const liveList = await this.#fetchLiveList()
+      this.#publish(this.#build(liveList, undefined))
+      published = this.#tier === 'live'
       const devModels = await this.#loadModelsDev().catch(() => ({}) as Record<string, ModelsDevEntry>)
-      const entries: LaneModel[] = []
-      for (const id of liveList) {
-        if (isResponsesOnly(id) && !this.#options.includeResponsesOnly) continue
-        const meta = devModels[id]
-        if (!freeVerdict(id, meta)) continue
-        entries.push(this.#toModel(id, meta))
-      }
+      const entries = this.#build(liveList, devModels)
       if (entries.length === 0) throw new Error('live list empty after the free filter')
       this.#entries = entries
       this.#tier = 'live'
@@ -228,6 +253,8 @@ export class OpenCodeLane implements Lane {
       await writeCache(this.#cachePath, entries)
     } catch (err) {
       this.#lastError = `live catalog unavailable: ${(err as Error).message}`
+      // A live list already on screen beats any stale cache: keep it.
+      if (published) return
       const cached = await readCache<LaneModel>(this.#cachePath)
       if (cached && cached.entries.length > 0) {
         this.#entries = cached.entries
@@ -237,6 +264,31 @@ export class OpenCodeLane implements Lane {
       this.#entries = [...STATIC_OPENCODE_MODELS]
       this.#tier = 'static'
     }
+  }
+
+  /** Adopt a non-empty live list, leaving a primed catalog in place otherwise. */
+  #publish(entries: LaneModel[]): void {
+    if (entries.length === 0) return
+    this.#entries = entries
+    this.#tier = 'live'
+    this.#lastError = ''
+  }
+
+  /**
+   * Free-filter one live list. `dev` may be absent: metadata is optional, and
+   * whatever the primed catalog already knew about an id is carried over so
+   * publishing early never regresses a display name or a context window.
+   */
+  #build(liveList: string[], dev: Record<string, ModelsDevEntry> | undefined): LaneModel[] {
+    const known = new Map(this.#entries.map((entry) => [entry.id, entry]))
+    const entries: LaneModel[] = []
+    for (const id of liveList) {
+      if (isResponsesOnly(id) && !this.#options.includeResponsesOnly) continue
+      const meta = dev?.[id]
+      if (!freeVerdict(id, meta)) continue
+      entries.push(mergeModel(this.#toModel(id, meta), known.get(id)))
+    }
+    return entries
   }
 
   #toModel(id: string, entry: ModelsDevEntry | undefined): LaneModel {
@@ -303,6 +355,24 @@ export class OpenCodeLane implements Lane {
   maxTokensFor(model: string): number {
     const declared = this.entry(model)?.maxOutput
     return typeof declared === 'number' && declared > 0 ? declared : DEFAULT_MAX_TOKENS
+  }
+}
+
+/**
+ * Overlay a freshly built model on the entry we already had for that id, so the
+ * fields the live list or models.dev left out keep their primed values.
+ */
+export function mergeModel(fresh: LaneModel, known: LaneModel | undefined): LaneModel {
+  if (!known) return fresh
+  const levels = fresh.reasoningLevels ?? known.reasoningLevels
+  return {
+    id: fresh.id,
+    ...(fresh.name ?? known.name) !== undefined ? { name: fresh.name ?? known.name } : {},
+    ...(fresh.contextWindow ?? known.contextWindow) !== undefined ? { contextWindow: fresh.contextWindow ?? known.contextWindow } : {},
+    ...(fresh.maxOutput ?? known.maxOutput) !== undefined ? { maxOutput: fresh.maxOutput ?? known.maxOutput } : {},
+    ...(fresh.imageInput ?? known.imageInput) !== undefined ? { imageInput: fresh.imageInput ?? known.imageInput } : {},
+    ...(fresh.reasoning ?? known.reasoning) !== undefined ? { reasoning: fresh.reasoning ?? known.reasoning } : {},
+    ...(levels !== undefined ? { reasoningLevels: levels } : {}),
   }
 }
 

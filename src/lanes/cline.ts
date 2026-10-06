@@ -115,6 +115,11 @@ export class ClineLane implements Lane {
     }
   }
 
+  /** Tier 2: seed from the disk cache so the lane is populated before the network. */
+  async prime(): Promise<void> {
+    await this.#catalog.prime()
+  }
+
   async start(): Promise<void> {
     const note = await this.#catalog.prime()
     this.#logger.info(`free2dsh[cline]: catalog ${this.#catalog.tier()} (${note})`)
