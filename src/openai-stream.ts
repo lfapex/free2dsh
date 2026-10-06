@@ -259,5 +259,12 @@ export async function* openAiStream(request: OpenAiStreamRequest): AsyncGenerato
   // Upstreams that end without a finish_reason but with tool calls still
   // mean "the model wants to call tools".
   if (reason.kind === 'stop' && finishReason == null && tools.size > 0) reason = { kind: 'tool-calls' }
+  // A `tool-calls` finish with no tool call on the wire is a dead end: the
+  // harness would be told to run tools that do not exist and the turn ends
+  // without any output. Downgrade to a plain stop so whatever content did
+  // arrive (reasoning/text) still stands as the turn's answer.
+  if (reason.kind === 'tool-calls' && tools.size === 0) {
+    reason = sawContent ? { kind: 'stop' } : emptyResponseFinish(request.model)
+  }
   yield { type: 'finish', reason }
 }

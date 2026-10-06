@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { SseParser } from '../src/sse.ts'
 import { buildOpenAIPayload, reasoningEffortFor, systemText } from '../src/request.ts'
-import { applyFreeLaneShape, freeVerdict, stripGateTools } from '../src/lanes/opencode.ts'
-import type { HarnessGenerateOptions } from '../src/types.ts'
+import { applyFreeLaneShape, freeVerdict, OpenCodeLane } from '../src/lanes/opencode.ts'
+import { openAiStream } from '../src/openai-stream.ts'
+import type { HarnessGenerateOptions, PluginLogger } from '../src/types.ts'
+
+const silent: PluginLogger = { info() {}, warn() {}, error() {}, debug() {} }
 
 test('SseParser: joins multi-line data and drops comments', () => {
   const parser = new SseParser()
@@ -151,37 +157,134 @@ test('freeVerdict: id, metadata cost, and the known-unusable ids', () => {
   assert.equal(freeVerdict('anything', { deprecated: true }), false)
 })
 
-async function* toolStream(): AsyncGenerator<import('../src/chunks.ts').HarnessChunk> {
-  yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-  yield { type: 'tool-call-delta', index: 0, id: 'a', name: 'read', argumentsDelta: '{"pa' }
-  yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'a', name: 'read', arguments: '{"pa' } }
-  yield { type: 'text-delta', index: 1, text: 'ok' }
-  yield { type: 'finish', reason: { kind: 'tool-calls' } }
+/** One SSE body from scripted `data:` payload lines. */
+function sseResponse(payloads: string[]): Response {
+  const body = new ReadableStream({
+    start(controller) {
+      const enc = new TextEncoder()
+      for (const payload of payloads) controller.enqueue(enc.encode(`data: ${payload}\n\n`))
+      controller.enqueue(enc.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  })
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
 }
 
-test('stripGateTools: a gate tool never reaches the harness, a real one still streams', async () => {
-  async function* mixed(): AsyncGenerator<import('../src/chunks.ts').HarnessChunk> {
-    yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-    yield { type: 'tool-call-delta', index: 0, id: 'a', name: 'read', argumentsDelta: '{"path":"a"}' }
-    yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'a', name: 'read', arguments: '{"path":"a"}' } }
-    yield { type: 'block-start', index: 1, blockType: 'tool-call' }
-    yield { type: 'tool-call-delta', index: 1, id: 'b', name: 'bash', argumentsDelta: '{"cmd":"ls"}' }
-    yield { type: 'block-end', index: 1, block: { type: 'tool-call', id: 'b', name: 'bash', arguments: '{"cmd":"ls"}' } }
-    yield { type: 'finish', reason: { kind: 'tool-calls' } }
+test('openAiStream: a tool-calls finish with no tool call downgrades to stop, not a dangling finish', async () => {
+  const stub = async () =>
+    sseResponse([
+      '{"choices":[{"delta":{"reasoning_content":"Let me read it."}}]}',
+      '{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+      '{"usage":{"prompt_tokens":10,"completion_tokens":5}}',
+    ])
+  const original = globalThis.fetch
+  globalThis.fetch = stub as typeof fetch
+  try {
+    const out = []
+    for await (const chunk of openAiStream({
+      url: 'https://zen.invalid/v1/chat/completions',
+      headers: {},
+      body: Buffer.from('{}'),
+      model: 'm',
+      contextWindow: 200_000,
+      label: 'opencode',
+    })) {
+      out.push(chunk)
+    }
+    const finish = out.find((chunk) => chunk.type === 'finish') as { reason: { kind: string } }
+    assert.equal(finish.reason.kind, 'stop', 'a dangling tool-calls finish would strand the harness mid-task')
+    assert.ok(out.some((chunk) => chunk.type === 'block-end' && (chunk.block as { type: string }).type === 'reasoning'))
+  } finally {
+    globalThis.fetch = original
   }
-  const out = []
-  for await (const chunk of stripGateTools(mixed(), ['bash'])) out.push(chunk)
-  assert.deepEqual(
-    out.filter((chunk) => chunk.type === 'block-end').map((chunk) => (chunk.block as { name: string }).name),
-    ['read'],
-    'only the gate tool is filtered; a real tool call still streams through',
-  )
-  assert.equal(out.filter((chunk) => chunk.type === 'block-start').length, 1, 'the suppressed block-start is held back too')
 })
 
-test('stripGateTools: when the caller owns the gate names they are still filtered by name', async () => {
-  const out = []
-  for await (const chunk of stripGateTools(toolStream(), ['bash', 'read'])) out.push(chunk)
-  assert.ok(!out.some((chunk) => chunk.type === 'block-end'), 'nothing was emitted for a gate tool')
-  assert.deepEqual(out.map((chunk) => chunk.type), ['text-delta', 'finish'])
+test('openAiStream: real tool calls still finish as tool-calls', async () => {
+  const stub = async () =>
+    sseResponse([
+      '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"read","arguments":"{\\"pa"}}]}}]}',
+      '{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\\"}"}}]}}]}',
+      '{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+      '{"usage":{"prompt_tokens":10,"completion_tokens":5}}',
+    ])
+  const original = globalThis.fetch
+  globalThis.fetch = stub as typeof fetch
+  try {
+    const out = []
+    for await (const chunk of openAiStream({
+      url: 'https://zen.invalid/v1/chat/completions',
+      headers: {},
+      body: Buffer.from('{}'),
+      model: 'm',
+      contextWindow: 200_000,
+      label: 'opencode',
+    })) {
+      out.push(chunk)
+    }
+    const finish = out.find((chunk) => chunk.type === 'finish') as { reason: { kind: string } }
+    assert.equal(finish.reason.kind, 'tool-calls')
+    const block = out.find((chunk) => chunk.type === 'block-end') as { block: { type: string; name: string; arguments: string } }
+    assert.equal(block.block.name, 'read')
+    assert.equal(block.block.arguments, '{"path"}')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('opencode lane: a `read` tool call from a caller that owns the name reaches the harness', async () => {
+  // Regression: the lane used to filter every tool call named bash/read —
+  // including the harness's own real tools — which turned each one into a
+  // reasoning-only dead step (finish tool-calls, zero tool blocks, turn
+  // "completes" mid-task with no feedback).
+  const stub = async (input: unknown) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      return sseResponse([
+        '{"choices":[{"delta":{"reasoning_content":"Let me read it."}}]}',
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\\"path\\":\\"a.txt\\"}"}}]}}]}',
+        '{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+        '{"usage":{"prompt_tokens":10,"completion_tokens":5}}',
+      ])
+    }
+    return new Response(JSON.stringify({ data: [{ id: 'mimo-v2.6-flash-free' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  const original = globalThis.fetch
+  globalThis.fetch = stub as typeof fetch
+  try {
+    const lane = new OpenCodeLane({
+      baseURL: 'https://zen.invalid/zen',
+      dataDir: mkdtempSync(join(tmpdir(), 'free2dsh-wire-')),
+      refreshSeconds: 300,
+      includeResponsesOnly: false,
+      logger: silent,
+    })
+    await lane.prime()
+    const out = []
+    for await (const chunk of lane.stream('mimo-v2.6-flash-free', {
+      provider: 'free2dsh',
+      model: 'mimo-v2.6-flash-free',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'read a.txt' }] }],
+      tools: [
+        { name: 'read', description: 'read a file', parameters: { type: 'object' } },
+        { name: 'pwsh', description: 'run a shell command', parameters: { type: 'object' } },
+      ],
+    })) {
+      out.push(chunk)
+    }
+    const toolBlocks = out.filter(
+      (chunk): chunk is Extract<import('../src/chunks.ts').HarnessChunk, { type: 'block-end' }> & {
+        block: Extract<import('../src/types.ts').HarnessBlock, { type: 'tool-call' }>
+      } =>
+        chunk.type === 'block-end' &&
+        chunk.block.type === 'tool-call',
+    )
+    assert.equal(toolBlocks.length, 1, 'the harness must receive the read call')
+    assert.equal(toolBlocks[0].block.name, 'read')
+    const finish = out.find((chunk) => chunk.type === 'finish') as { reason: { kind: string } }
+    assert.equal(finish.reason.kind, 'tool-calls')
+  } finally {
+    globalThis.fetch = original
+  }
 })

@@ -14,8 +14,11 @@ import type { HarnessGenerateOptions, Lane, LaneHealth, LaneModel, PluginLogger 
  * lane does have to look like the CLI: a matching user agent, Zen's canonical
  * session/project ids derived per conversation, and (since 2026-09-16) a body
  * shape that streams and carries the reserved `bash`/`read` function tools.
- * The gate tools are stripped again from the tool-call stream so the harness
- * never sees them.
+ * Those gate tools are injected only when the caller does not already have a
+ * tool of the same name, and calls to them flow back to the harness like any
+ * real tool call — stripping them again strands a `tool-calls` finish with no
+ * tool for the harness to run, which silently ends the turn mid-task (the
+ * reference opencode2dsh plugin never filters the response either).
  */
 
 export const OPENCODE_LABEL = 'OpenCode Zen'
@@ -82,10 +85,10 @@ function gateTool(name: (typeof FREE_LANE_GATE_TOOLS)[number]): unknown {
 }
 
 /**
- * Rewrite the chat body so it passes the free-lane gate: force streaming,
- * append the reserved bash/read tools, and pin tool_choice=none when the
- * caller sent no tools of its own. Returns whether anything was injected so the
- * reader can strip those calls back out.
+ * Rewrite the chat body so it passes the free-lane gate: force streaming and
+ * append the reserved bash/read tools, pinning tool_choice=none when the
+ * caller sent no tools of its own. Calls to an injected gate tool flow back to
+ * the harness like any tool call — the harness owns what happens with them.
  */
 export function applyFreeLaneShape(payload: OpenAIPayload): { payload: OpenAIPayload; injected: boolean } {
   const tools = Array.isArray(payload.tools) ? [...(payload.tools as unknown[])] : []
@@ -343,7 +346,7 @@ export class OpenCodeLane implements Lane {
       label: this.id,
     })
 
-    yield* withWatchdogs(stripGateTools(chunks, FREE_LANE_GATE_TOOLS), {
+    yield* withWatchdogs(chunks, {
       ...(this.#options.firstEventMs !== undefined ? { firstEventMs: this.#options.firstEventMs } : {}),
       ...(this.#options.bodyIdleMs !== undefined ? { bodyIdleMs: this.#options.bodyIdleMs } : {}),
       label: this.id,
@@ -380,58 +383,4 @@ export function mergeModel(fresh: LaneModel, known: LaneModel | undefined): Lane
     ...(fresh.reasoning ?? known.reasoning) !== undefined ? { reasoning: fresh.reasoning ?? known.reasoning } : {},
     ...(levels !== undefined ? { reasoningLevels: levels } : {}),
   }
-}
-
-/**
- * Drop the reserved gate tools from the event stream. They exist only to pass
- * the free-lane gate; a call to one is never a real tool call, and letting it
- * through would hand the harness a phantom tool result to execute.
- *
- * A tool-call block's name is not knowable at `block-start`, so the block is
- * held until its `block-end` resolves the name. Harness chunks carry explicit
- * indexes, so holding one block back does not disturb the rest of the stream.
- */
-export async function* stripGateTools(source: AsyncIterable<HarnessChunk>, names: readonly string[]): AsyncGenerator<HarnessChunk> {
-  const blocked = new Set(names)
-  let held: { start: Extract<HarnessChunk, { type: 'block-start' }>; deltas: Array<Extract<HarnessChunk, { type: 'tool-call-delta' }>> } | undefined
-
-  const release = function* (): Generator<HarnessChunk> {
-    if (!held) return
-    const block = held
-    held = undefined
-    yield block.start
-    for (const delta of block.deltas) yield delta
-  }
-
-  for await (const chunk of source) {
-    if (chunk.type === 'block-start') {
-      if (chunk.blockType === 'tool-call') {
-        yield* release()
-        held = { start: chunk, deltas: [] }
-        continue
-      }
-      yield* release()
-      yield chunk
-      continue
-    }
-    if (chunk.type === 'tool-call-delta') {
-      if (chunk.name !== undefined && blocked.has(chunk.name)) {
-        held = undefined // a gate tool: drop the whole block
-        continue
-      }
-      if (held) held.deltas.push(chunk)
-      continue
-    }
-    if (chunk.type === 'block-end' && chunk.block.type === 'tool-call') {
-      if (blocked.has(chunk.block.name)) {
-        held = undefined
-        continue
-      }
-      yield* release()
-      yield chunk
-      continue
-    }
-    yield chunk
-  }
-  yield* release()
 }
