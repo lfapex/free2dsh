@@ -204,11 +204,15 @@ export class ClineLane implements Lane {
     }
     const { accessToken, accountId } = await getValidAccessToken({ baseURL: this.#baseURL, credentialsPath: this.#credentialsPath })
 
+    // The watchdog owns this request's lifetime: when its window expires it
+    // aborts this controller, so pi-ai's in-flight request dies instead of
+    // streaming on unseen.
+    const abort = new AbortController()
     const events = provider.streamSimple(piModel, context, {
       apiKey: accessToken,
       sessionId: ids.session,
       headers: clineRequestHeaders(accountId),
-      signal: options.signal,
+      signal: abort.signal,
       maxRetries: 0,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
@@ -219,6 +223,8 @@ export class ClineLane implements Lane {
       ...(this.#bodyIdleMs !== undefined ? { bodyIdleMs: this.#bodyIdleMs } : {}),
       label: this.id,
       model,
+      abort,
+      ...(options.signal ? { signal: options.signal } : {}),
     })
   }
 }

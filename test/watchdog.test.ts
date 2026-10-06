@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { HarnessChunk } from '../src/chunks.ts'
-import { withWatchdogs } from '../src/watchdog.ts'
+import { withWatchdogs, type WatchdogOptions } from '../src/watchdog.ts'
 
-const FAST = { firstEventMs: 60, bodyIdleMs: 60, label: 'test', model: 'm' }
+const FAST: WatchdogOptions = { firstEventMs: 60, bodyIdleMs: 60, label: 'test', model: 'm' }
 
-async function collect(source: AsyncIterable<HarnessChunk>, options = FAST): Promise<HarnessChunk[]> {
+async function collect(source: AsyncIterable<HarnessChunk>, options: WatchdogOptions = FAST): Promise<HarnessChunk[]> {
   const out: HarnessChunk[] = []
   for await (const chunk of withWatchdogs(source, options)) out.push(chunk)
   return out
@@ -118,4 +118,58 @@ test('the idle window is only applied after the first chunk', async () => {
   }
   await collect(source(), { firstEventMs: 10_000, bodyIdleMs: 50, label: 'test', model: 'm' })
   assert.ok(Date.now() - started < 5_000, 'used bodyIdleMs, not firstEventMs')
+})
+
+test('a timeout aborts the upstream request instead of leaving it streaming', async () => {
+  // Racing the deadline only stops *reporting*; without an abort the parked
+  // next() keeps the socket and the upstream generation alive.
+  const abort = new AbortController()
+  let abortedAt = 0
+  abort.signal.addEventListener('abort', () => {
+    abortedAt = Date.now()
+  })
+
+  async function* source(): AsyncGenerator<HarnessChunk> {
+    // Stands in for a lane parked on `await reader.read()` for the response.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    yield { type: 'text-delta', index: 0, text: 'late' }
+    yield { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+
+  const chunks = await collect(source(), { ...FAST, abort })
+  const last = chunks.at(-1)
+  assert.equal(last?.type, 'finish')
+  assert.equal(last?.type === 'finish' && last.reason.kind === 'error' ? last.reason.failure.code : '', 'TIMEOUT_FIRST_EVENT')
+  assert.ok(abortedAt > 0, 'the upstream request was aborted when the window expired')
+})
+
+test('the watchdog aborts the lane controller when the turn ends normally', async () => {
+  let aborted = false
+  const abort = new AbortController()
+  abort.signal.addEventListener('abort', () => {
+    aborted = true
+  })
+  async function* source(): AsyncGenerator<HarnessChunk> {
+    yield { type: 'text-delta', index: 0, text: 'hi' }
+    yield { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  await collect(source(), { ...FAST, abort })
+  assert.equal(aborted, true, 'a completed turn still releases the upstream connection')
+})
+
+test('an already-aborted caller signal propagates to the lane controller', async () => {
+  const abort = new AbortController()
+  const caller = AbortSignal.abort()
+  let aborted = false
+  abort.signal.addEventListener('abort', () => {
+    aborted = true
+  })
+  async function* source(): AsyncGenerator<HarnessChunk> {
+    yield { type: 'text-delta', index: 0, text: 'hi' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  await collect(source(), { ...FAST, abort, signal: caller })
+  assert.equal(aborted, true, 'external cancel reached the upstream controller')
 })

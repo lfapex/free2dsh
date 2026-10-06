@@ -213,11 +213,15 @@ export class AtomCodeLane implements Lane {
       nonce: newNonce(),
     })
 
+    // The watchdog owns this request's lifetime: when its window expires it
+    // aborts this controller, so the in-flight fetch dies instead of streaming
+    // on unseen.
+    const abort = new AbortController()
     const chunks = openAiStream({
       url,
       headers: { authorization: `Bearer ${accessToken}`, ...signed },
       body,
-      signal: options.signal,
+      signal: abort.signal,
       model,
       contextWindow: entry?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       label: this.id,
@@ -232,6 +236,8 @@ export class AtomCodeLane implements Lane {
       ...(this.#options.bodyIdleMs !== undefined ? { bodyIdleMs: this.#options.bodyIdleMs } : {}),
       label: this.id,
       model,
+      abort,
+      ...(options.signal ? { signal: options.signal } : {}),
     })
   }
 

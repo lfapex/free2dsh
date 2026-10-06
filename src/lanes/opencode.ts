@@ -329,11 +329,15 @@ export class OpenCodeLane implements Lane {
     const entry = this.entry(model)
     const shapedHolder = await buildOpenAIPayload(options, entry, (payload) => applyFreeLaneShape(payload).payload)
     const ids = deriveZenIds(shapedHolder.payload.messages, this.#projectSeed)
+    // The watchdog owns this request's lifetime: when its window expires it
+    // aborts this controller, so the in-flight fetch dies instead of streaming
+    // on unseen. Passing the signal in is what makes the abort take effect.
+    const abort = new AbortController()
     const chunks = openAiStream({
       url: `${this.#options.baseURL.replace(/\/+$/, '')}/v1/chat/completions`,
       headers: zenHeaders(ids),
       body: shapedHolder.body,
-      signal: options.signal,
+      signal: abort.signal,
       model,
       contextWindow: entry?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       label: this.id,
@@ -344,6 +348,8 @@ export class OpenCodeLane implements Lane {
       ...(this.#options.bodyIdleMs !== undefined ? { bodyIdleMs: this.#options.bodyIdleMs } : {}),
       label: this.id,
       model,
+      abort,
+      ...(options.signal ? { signal: options.signal } : {}),
     })
   }
 
