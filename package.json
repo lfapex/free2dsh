@@ -1,0 +1,65 @@
+{
+  "name": "free2dsh",
+  "version": "0.1.0",
+  "description": "Every free LLM lane in one DSH plugin: Cline free fleet, AtomCode (AtomGit CodingPlan) and OpenCode Zen anonymous models behind a single provider, so one install gives you all of them.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lfapex/free2dsh.git"
+  },
+  "homepage": "https://github.com/lfapex/free2dsh#readme",
+  "bugs": "https://github.com/lfapex/free2dsh/issues",
+  "author": "lfapex",
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --out-dir lib",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.ts\"",
+    "smoke": "npm run build && node test/smoke.mjs",
+    "live": "npm run build && node test/live.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "free-models",
+    "cline",
+    "atomcode",
+    "atomgit",
+    "opencode",
+    "llm-adapter",
+    "cordis",
+    "pi-ai",
+    "typescript"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@earendil-works/pi-ai": "^0.82.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.15.0",
+    "typescript": "^5.9.0"
+  }
+}

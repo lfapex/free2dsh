@@ -1,0 +1,20 @@
+# free2dsh DSH plugin — bundle patch: insert the plugin row (deployment-global).
+#
+# Defaults need no edits: every enabled lane registers itself immediately and
+# warms its catalog in the background, so one install exposes Cline's free
+# fleet, the AtomCode/AtomGit CodingPlan lane and the OpenCode Zen anonymous
+# lane under a single `free2dsh` provider.
+#
+# Override any option via the config object below (see src/config.ts), e.g.:
+#
+# - insert:
+#     - id: free2dsh
+#       name: 'free2dsh'
+#       config:
+#         lanes: [cline, opencode]
+#         refreshSeconds: 300
+#         atomcodeAllowRefresh: false
+- insert:
+    - id: free2dsh
+      name: 'free2dsh'
+      config: {}
