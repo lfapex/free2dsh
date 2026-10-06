@@ -49,6 +49,18 @@ test('the settings schema passes caller overrides through', () => {
   assert.equal(parsed.bodyIdleMs, 300_000)
 })
 
+test('explicitly-undefined values fall back to the default, not undefined', () => {
+  // A host may hand us keys that are present but undefined (an empty settings
+  // form, a serialised patch that omits values). Spreading those raw would
+  // clobber a default and crash apply() on the first `.trim()`.
+  const resolved = resolveConfig({ dataDir: undefined, lanes: undefined, refreshSeconds: undefined })
+  assert.equal(resolved.dataDir, defaults.dataDir)
+  assert.equal(resolved.refreshSeconds, defaults.refreshSeconds)
+  assert.deepEqual(resolved.lanes, [...LANE_IDS])
+  // And nothing downstream may crash on it.
+  assert.doesNotThrow(() => resolveConfig({ dataDir: undefined }).dataDir.trim())
+})
+
 test('the settings schema rejects out-of-range values instead of booting broken', () => {
   assert.throws(() => Config({ refreshSeconds: 1 }))
   assert.throws(() => Config({ firstEventMs: 10 }))

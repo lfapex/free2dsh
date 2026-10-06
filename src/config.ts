@@ -95,10 +95,17 @@ export function resolveLanes(config: Free2dshConfig): LaneId[] {
 }
 
 export function resolveConfig(config: Free2dshConfig = {}): ResolvedConfig {
+  // A host may hand us keys that are present but undefined (an empty settings
+  // form, a serialised patch that omits values). Spreading those would
+  // clobber a default with `undefined` and crash on first use, so drop them.
+  const provided: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(config)) {
+    if (value !== undefined) provided[key] = value
+  }
   return {
     ...defaults,
-    ...config,
-    lanes: resolveLanes(config),
+    ...(provided as Free2dshConfig),
+    lanes: resolveLanes(provided as Free2dshConfig),
   }
 }
 
