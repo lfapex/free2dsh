@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, test } from 'node:test'
 
-import { getValidAccessToken, readClineCredentials, refreshClineToken, resetClineCaches } from '../src/lanes/cline-credentials.ts'
+import { forgetClineLiveToken, getValidAccessToken, readClineCredentials, refreshClineToken, resetClineCaches } from '../src/lanes/cline-credentials.ts'
 
 /**
  * The Cline lane renews its own access token, so this test exists to keep the
@@ -149,4 +149,75 @@ test('a direct renewal without a refresh token reports the actionable error', as
 test('a missing credentials file names the fix', async () => {
   const missing = join(mkdtempSync(join(tmpdir(), 'free2dsh-none-')), 'providers.json')
   await assert.rejects(() => readClineCredentials(missing), /Open the Cline desktop app and log in once/)
+})
+
+test('a desktop-side re-authentication outranks the minted token', async () => {
+  // The production failure: the plugin minted a token, then the desktop app
+  // re-authenticated and revoked it. The rewritten file holds a different,
+  // still fresh token — that one must win, or every call 401s with
+  // "re-authenticate your Cline account" while the desktop client works.
+  const { path } = providersFile({ accessToken: 'stale-but-valid', expiresAt: Date.now() + 3_600_000 })
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ data: { accessToken: 'minted-token', expiresAt: Date.now() + 3_600_000 } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+  // Force a mint: mark the first file token stale so the refresh fires.
+  writeFileSync(
+    path,
+    JSON.stringify({
+      providers: { cline: { settings: { auth: { accessToken: 'old-token', refreshToken: 'refresh-me', accountId: 'usr-1', expiresAt: Date.now() - 60_000 } } } },
+    }),
+  )
+  const minted = await getValidAccessToken({ baseURL: 'https://api.cline.bot/api/v1', credentialsPath: path })
+  assert.equal(minted.accessToken, 'minted-token')
+  assert.equal(minted.refreshed, true)
+
+  // The desktop app re-authenticates: providers.json now holds a fresh token.
+  writeFileSync(
+    path,
+    JSON.stringify({
+      providers: { cline: { settings: { auth: { accessToken: 'desktop-reauth-token', refreshToken: 'refresh-me', accountId: 'usr-1', expiresAt: Date.now() + 3_600_000 } } } },
+    }),
+  )
+  const after = await getValidAccessToken({ baseURL: 'https://api.cline.bot/api/v1', credentialsPath: path })
+  assert.equal(after.accessToken, 'desktop-reauth-token', 'the desktop app\'s fresh token outranks the minted one')
+  assert.equal(after.refreshed, false)
+
+  // ...and with the file stale again, the minted token would still be used
+  // rather than forcing a refresh on every call.
+  writeFileSync(
+    path,
+    JSON.stringify({
+      providers: { cline: { settings: { auth: { accessToken: 'old-token', refreshToken: 'refresh-me', accountId: 'usr-1', expiresAt: Date.now() - 60_000 } } } },
+    }),
+  )
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    return new Response(JSON.stringify({ data: { accessToken: 'minted-2', expiresAt: Date.now() + 3_600_000 } }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  const again = await getValidAccessToken({ baseURL: 'https://api.cline.bot/api/v1', credentialsPath: path })
+  assert.equal(again.accessToken, 'minted-2')
+  assert.equal(again.refreshed, true)
+  assert.equal(calls, 1, 'exactly one refresh after the file went stale again')
+})
+
+test('forgetClineLiveToken drops the minted token after an upstream rejection', async () => {
+  const { path } = providersFile()
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ data: { accessToken: 'minted-token', expiresAt: Date.now() + 3_600_000 } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+  const minted = await getValidAccessToken({ baseURL: 'https://api.cline.bot/api/v1', credentialsPath: path })
+  assert.equal(minted.accessToken, 'minted-token')
+
+  // Upstream rejected the session: forget the minted token, and the next call
+  // goes back to the file (and refreshes, since the file token is stale).
+  forgetClineLiveToken(path)
+  const next = await getValidAccessToken({ baseURL: 'https://api.cline.bot/api/v1', credentialsPath: path })
+  assert.equal(next.accessToken, 'minted-token', 'the refresh endpoint re-mints from the file refresh token')
+  assert.equal(next.refreshed, true)
 })

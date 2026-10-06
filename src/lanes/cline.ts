@@ -5,7 +5,7 @@ import { withWatchdogs } from '../watchdog.ts'
 import type { HarnessChunk } from '../chunks.ts'
 import type { HarnessGenerateOptions, Lane, LaneHealth, LaneModel, PluginLogger } from '../types.ts'
 import { ClineCatalog, clineCachePath, type ClineCatalogOptions } from './cline-catalog.ts'
-import { clineRequestHeaders, defaultCredentialsPath, getValidAccessToken } from './cline-credentials.ts'
+import { clineRequestHeaders, defaultCredentialsPath, forgetClineLiveToken, getValidAccessToken } from './cline-credentials.ts'
 
 /**
  * The Cline lane: streams from Cline's OpenAI-compatible backend
@@ -218,14 +218,22 @@ export class ClineLane implements Lane {
       maxTokens: options.maxTokens,
     }) as AsyncIterable<PiEvent>
 
-    yield* withWatchdogs(toStreamChunks(events, piModel.contextWindow), {
+    // An upstream 401/403 usually means the token this process is holding was
+    // revoked by a desktop-side re-authentication: forget any minted token so
+    // the next call re-reads what the desktop app last wrote.
+    for await (const chunk of withWatchdogs(toStreamChunks(events, piModel.contextWindow), {
       ...(this.#firstEventMs !== undefined ? { firstEventMs: this.#firstEventMs } : {}),
       ...(this.#bodyIdleMs !== undefined ? { bodyIdleMs: this.#bodyIdleMs } : {}),
       label: this.id,
       model,
       abort,
       ...(options.signal ? { signal: options.signal } : {}),
-    })
+    })) {
+      if (chunk.type === 'finish' && 'failure' in chunk.reason && chunk.reason.failure.code === 'AUTH') {
+        forgetClineLiveToken(this.#credentialsPath)
+      }
+      yield chunk
+    }
   }
 }
 

@@ -12,6 +12,12 @@
  * The renewed token lives only in memory: `providers.json` is never rewritten,
  * so it stays the desktop app's property. A manual sign-in is only needed when
  * the refresh token itself is missing or revoked.
+ *
+ * Caveat that bit in production: a desktop-side re-authentication (or refresh)
+ * revokes the access tokens this process minted earlier. The file therefore
+ * outranks a minted token whenever it holds a different, still fresh one — a
+ * long-lived host that kept serving its minted token got 401s while the
+ * desktop client worked fine (see getValidAccessToken).
  */
 
 import { readFile, stat } from 'node:fs/promises'
@@ -234,13 +240,29 @@ const pendingRefreshes = new Map<string, Promise<ClineCredentials>>()
  * is at (or past) its expiry. When refresh fails but a token exists, the stale
  * token is returned — the API call it arms may still succeed (clock skew) or
  * surface a precise 401 upstream.
+ *
+ * The file always outranks a minted token when it holds a different, still
+ * fresh one: re-authenticating (or refreshing) in the desktop app revokes the
+ * access tokens this process minted earlier, so a long-lived host that keeps
+ * serving the minted token would 401 with "re-authenticate your Cline account"
+ * while the desktop client works fine.
  */
 export async function getValidAccessToken(options: { baseURL: string; credentialsPath: string }): Promise<ValidToken> {
   const key = options.credentialsPath || defaultCredentialsPath()
   const creds = await readClineCredentialsCached(key)
+  // A minted token only survives while the desktop app has not written a
+  // different (still fresh) token of its own over providers.json.
   const live = liveTokens.get(key)
-  const token = live?.accessToken ?? creds.accessToken
-  const expiresAt = live?.expiresAt ?? creds.expiresAt
+  const fileSupersedes =
+    live !== undefined &&
+    typeof creds.accessToken === 'string' &&
+    creds.accessToken.length > 0 &&
+    creds.accessToken !== live.accessToken &&
+    (creds.expiresAt === undefined || Date.now() < creds.expiresAt - EXPIRY_MARGIN_MS)
+  if (fileSupersedes) liveTokens.delete(key)
+  const current = liveTokens.get(key)
+  const token = current?.accessToken ?? creds.accessToken
+  const expiresAt = current?.expiresAt ?? creds.expiresAt
 
   if (token && (expiresAt === undefined || Date.now() < expiresAt - EXPIRY_MARGIN_MS)) {
     return { accessToken: token, accountId: creds.accountId, refreshed: false }
@@ -278,4 +300,14 @@ export function resetClineCaches(): void {
   cachePath = ''
   liveTokens.clear()
   pendingRefreshes.clear()
+}
+
+/**
+ * Forget the minted token for `path` (default: the resolved credentials path).
+ * The lane calls this when upstream rejects the session with 401/403, so the
+ * next call re-reads whatever the desktop app last wrote and, if that is stale
+ * too, refreshes against the file's current refresh token.
+ */
+export function forgetClineLiveToken(path?: string): void {
+  liveTokens.delete(path || defaultCredentialsPath())
 }
