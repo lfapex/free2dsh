@@ -52,11 +52,15 @@ dsh plugin --profile web add file:$PWD
 `~/.atomcode/auth.toml` 和 `~/.atomcode/config.toml` 里的 AtomGit 模型档案
 （可用 `ATOMCODE_HOME` 或配置项 `atomcodeHome` 覆盖）。
 
-**Cline**：装好 Cline 桌面版并登录一次。插件读取
+**Cline**：装好 Cline 桌面版并登录**一次**。插件读取
 `~/.cline/data/settings/providers.json`（可用 `CLINE_HOME` 或配置项
-`clineCredentialsPath` 覆盖）。Cline 的免费额度与桌面版共享；插件**故意不自己刷新
-令牌** —— 自刷新会轮换 refresh token，把桌面版踢下线并撤销会话。调用开始 401 时，
-打开一次 Cline 桌面版即可。
+`clineCredentialsPath` 覆盖），之后自己维持会话：访问令牌到期时通过
+`POST /api/v1/auth/refresh` 在进程内续期（按凭据文件 single-flight 去重）。Cline
+后端**不轮换** refresh token，因此不会影响桌面版，**不需要**开着桌面版。续期出来的
+令牌只存在内存里 —— `providers.json` 不会被回写，始终是桌面版自己的文件。
+
+只有当 refresh token 本身丢失或被撤销时（`providers.json` 里没有 `refreshToken`，
+或刷新接口返回 401/403）才需要重新登录。Cline 的免费额度与桌面版共享。
 
 ## 配置
 
@@ -132,7 +136,8 @@ user agent、按会话派生的 `ses_…` session 与 `prj_…` project id，以
 | --- | --- |
 | 某通道 0 个模型并伴随 warning | 没这个平台的账号时的正常表现，其他通道照常用 |
 | `CLINE_NOT_LOGGED_IN` | 打开 Cline 桌面版登录一次 |
-| Cline 调用开始 401 | 打开一次 Cline 桌面版，让它自己刷新令牌 |
+| Cline 调用开始 401 | 续期失败；在 Cline 桌面版重新登录一次（桌面版不需要常驻） |
+| `CLINE_NO_REFRESH_TOKEN` | `providers.json` 里没有 `refreshToken`；在 Cline 桌面版重新登录 |
 | Cline `cline-free/*` 返回 403 | 客户端身份头被拒，检查 `CLINE_CLIENT_TYPE` / `CLINE_CLIENT_VERSION` |
 | `ATOMCODE_NOT_INSTALLED` | 执行 `atomcode login` |
 | AtomCode 刚启动就 401/403 | CLI 文件令牌过期；`atomcodeAllowRefresh: true` 会自行换取，否则重新登录 |

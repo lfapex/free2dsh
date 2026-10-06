@@ -2,11 +2,16 @@
  * Cline desktop credentials reader.
  *
  * The Cline desktop app persists its WorkOS OAuth session at
- * `~/.cline/data/settings/providers.json` and keeps it refreshed while the app
- * runs. Refresh is deliberately conservative: the desktop app owns the refresh
- * cycle, and a plugin that fights it can revoke the user's session. We read
- * what the app last persisted, and only mint in memory (never writing back to
- * providers.json) when the file token is already stale.
+ * `~/.cline/data/settings/providers.json`. The plugin reads that file on every
+ * call (mtime-cached) and, when the access token reaches its expiry, renews it
+ * in-process via `POST /api/v1/auth/refresh`. Cline's backend does NOT rotate
+ * the refresh token — the response echoes back the same one the desktop app
+ * keeps reusing — so renewing here never kicks the desktop app out and you do
+ * not need the app running.
+ *
+ * The renewed token lives only in memory: `providers.json` is never rewritten,
+ * so it stays the desktop app's property. A manual sign-in is only needed when
+ * the refresh token itself is missing or revoked.
  */
 
 import { readFile, stat } from 'node:fs/promises'

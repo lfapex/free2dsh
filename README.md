@@ -57,12 +57,18 @@ reads `~/.atomcode/auth.toml` and the AtomGit model profiles from
 `~/.atomcode/config.toml` (override with `ATOMCODE_HOME` or the
 `atomcodeHome` config).
 
-**Cline** — install the Cline desktop app and log in once. The lane reads
+**Cline** — install the Cline desktop app and log in **once**. The lane reads
 `~/.cline/data/settings/providers.json` (override with `CLINE_HOME` or the
-`clineCredentialsPath` config). Cline's free quota is shared with the desktop
-app, and the plugin deliberately never refreshes the token itself — a
-self-managed refresh would rotate the refresh token out from under the app and
-revoke your session. When a call starts 401ing, open Cline desktop once.
+`clineCredentialsPath` config) and then keeps the session alive on its own:
+when the access token reaches its expiry it renews it in-process via
+`POST /api/v1/auth/refresh`, single-flighted per credentials file. Cline's
+backend does not rotate the refresh token, so the desktop app is unaffected
+and you do **not** need it running. The renewed token lives only in memory —
+`providers.json` is never rewritten, so it stays the desktop app's property.
+
+You only have to sign in again when the refresh token itself is gone or
+revoked (`providers.json` has no `refreshToken`, or the refresh answers
+401/403). Cline's free quota is shared with the desktop app.
 
 ## Configuration
 
@@ -147,7 +153,8 @@ is unreachable. Failed refreshes are logged and never block the other lanes.
 | --- | --- |
 | A lane shows 0 models and a warning | expected when you have no account for it — the other lanes still work |
 | `CLINE_NOT_LOGGED_IN` | open the Cline desktop app and sign in |
-| Cline calls start 401ing | open Cline desktop once so it refreshes its own token |
+| Cline calls start 401ing | the renewal failed — sign in from the Cline desktop app again; the desktop app need not stay running |
+| `CLINE_NO_REFRESH_TOKEN` | `providers.json` carries no `refreshToken`, so there is nothing to renew with; sign in from the Cline desktop app |
 | Cline `cline-free/*` returns 403 | the backend rejected the client identity headers; check `CLINE_CLIENT_TYPE` / `CLINE_CLIENT_VERSION` |
 | `ATOMCODE_NOT_INSTALLED` | run `atomcode login` |
 | AtomCode 401/403 right after boot | the CLI file token was stale; `atomcodeAllowRefresh: true` mints one, otherwise log in again |
