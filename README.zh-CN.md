@@ -33,6 +33,14 @@ DSH ≥ 0.1.7、Node.js ≥ 20。每个通道另有自己的前置条件，见[�
 
 ## 安装
 
+直接从 GitHub 装 —— 无需先构建，打包好的 bundle 就在仓库里：
+
+```sh
+dsh plugin --profile web add github:lfapex/free2dsh
+```
+
+改源码时用本地 checkout：
+
 ```sh
 git clone https://github.com/lfapex/free2dsh.git
 cd free2dsh && npm install && npm run build
@@ -41,6 +49,10 @@ dsh plugin --profile web add file:$PWD
 
 装完重启 profile，模型选择器里出现 `free2dsh`，旁边还有三个单通道路由
 （`free2dsh-cline` 等）。
+
+仓库里**没有任何安装期构建脚本**：`lib/` 已提交进 git，pnpm 安装这个插件时无需
+执行任何脚本。这是有意为之 —— pnpm 默认拦截 git 依赖的构建脚本，除非使用方手动
+加入 allowlist，否则插件会直接装不上。
 
 ## 各通道准备
 
@@ -144,6 +156,7 @@ user agent、按会话派生的 `ses_…` session 与 `prj_…` project id，以
 | OpenCode 模型偏少 | 实时拉取时网络还没就绪，下一轮刷新会补齐 |
 | Zen 报 `RATE_LIMIT` | 匿名通道按 IP 限流，换节点或稍等 |
 | 报 `REGION_BLOCKED` | Zen 判定当前地区不可用，换一个模型 |
+| 安装报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` | 你装的那个版本仍声明了 `prepare` 脚本；pnpm ≥ 10.26 会拦截 git 依赖的构建脚本，直到**使用方**放行。换一个没有该脚本的版本即可（bundle 已提交，本来就不需要构建），或在 profile 的 `pnpm-workspace.yaml` 里把本插件加进 `allowBuilds` |
 
 健康快照在 `<dataDir>/cache/` 下：`cline.json`、`atomcode.json`、`opencode.json`。
 

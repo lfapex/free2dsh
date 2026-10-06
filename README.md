@@ -35,6 +35,14 @@ DSH ≥ 0.1.7, Node.js ≥ 20. Each lane needs its own prerequisites — see
 
 ## Install
 
+Straight from GitHub — nothing to build first, the bundle ships in the repo:
+
+```sh
+dsh plugin --profile web add github:lfapex/free2dsh
+```
+
+From a local checkout, if you are working on the source:
+
 ```sh
 git clone https://github.com/lfapex/free2dsh.git
 cd free2dsh && npm install && npm run build
@@ -43,6 +51,11 @@ dsh plugin --profile web add file:$PWD
 
 Restart the profile afterwards. `free2dsh` appears in the model picker; the
 per-lane routes (`free2dsh-cline`, …) show up next to it.
+
+The repo declares **no install-time build scripts**: `lib/` is committed, so
+pnpm never has to run anything while installing the plugin. That is deliberate —
+pnpm blocks git-hosted build scripts until the consumer allowlists them, which
+would otherwise make the plugin uninstallable (see Troubleshooting).
 
 ## Per-lane setup
 
@@ -161,6 +174,7 @@ is unreachable. Failed refreshes are logged and never block the other lanes.
 | OpenCode only lists a few models | the live fetch raced your network; the next refresh fixes it |
 | `RATE_LIMIT` on Zen | the anonymous lane is quota-per-IP — switch network node or wait |
 | `REGION_BLOCKED` | Zen rejected the current region for that model; pick another |
+| `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` | you installed a revision that still declared a `prepare` script; pnpm ≥ 10.26 blocks git-hosted build scripts until the *consumer* approves them. Install a revision without one (the bundle is committed, so there is nothing to build), or allowlist the plugin in the profile's `pnpm-workspace.yaml` under `allowBuilds` |
 
 Health snapshots live under `<dataDir>/cache/` — `cline.json`, `atomcode.json`,
 `opencode.json`.

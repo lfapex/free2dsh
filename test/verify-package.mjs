@@ -35,7 +35,16 @@ check('lib/ is tracked in git', tracked.includes('lib/index.js'), `tracked: ${tr
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 check('package main resolves on disk', existsSync(join(root, pkg.main)), `${pkg.main} missing`)
 check('"files" ships lib/', (pkg.files ?? []).includes('lib'))
-check('a prepare script builds the bundle', typeof pkg.scripts?.prepare === 'string', pkg.scripts?.prepare ?? '(none)')
+
+// NO install-time build scripts. DSH installs this with pnpm straight from
+// GitHub, and pnpm refuses to run build scripts for a git-hosted package
+// unless the user adds it to `allowBuilds` in their pnpm-workspace.yaml
+// (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED). Shipping the bundle in the repo
+// means the install needs no scripts at all — so declaring `prepare` would
+// only force that manual step on every user.
+const INSTALL_HOOKS = ['preinstall', 'install', 'postinstall', 'prepare', 'prepack']
+const hooks = INSTALL_HOOKS.filter((hook) => typeof pkg.scripts?.[hook] === 'string')
+check('no install-time build scripts (pnpm git installs)', hooks.length === 0, `declares: ${hooks.join(', ')}`)
 
 // 3. What a git install actually receives must be complete. DSH installs
 //    `github:lfapex/free2dsh` with pnpm, which uses the committed tree — so

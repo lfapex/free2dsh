@@ -8,4 +8,11 @@ node_modules/
 # so the bundle has to travel with the repo: with lib/ ignored, the installed
 # package has no lib/index.js, `main` is unresolvable and the host reports
 # "failed to import". cline2dsh hit this in v0.1.1 and fixed it the same way.
-# `prepare` builds lib/ on git install too, so both paths are covered.
+#
+# Do NOT add a `prepare` (or any other install-time) script. Modern pnpm
+# refuses to run build scripts for a git-hosted dependency unless the CONSUMER
+# approves it, and an unapproved one fails the whole install with
+# ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED — the profile's pnpm-workspace.yaml would
+# need an allowBuilds entry pinning this repo, or the exact commit. With the
+# bundle committed there is nothing to build at install time, so the plugin
+# installs for anyone, on any pnpm, with no allowlist edit.

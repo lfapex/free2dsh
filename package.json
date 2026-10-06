@@ -33,7 +33,6 @@
   },
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts --out-dir lib",
-    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/*.test.ts\"",
     "smoke": "npm run build && node test/smoke.mjs",
